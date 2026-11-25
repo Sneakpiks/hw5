@@ -6,8 +6,10 @@
 
 #include <algorithm>
 
+const int BUST = 1000;
+
 Search::Search(Mothership &mothership)
-    : mothership(mothership), roboCount(mothership.getRobotCount())
+    : mothership(mothership), roboCount(mothership.getRobotCount()), nextRobot(0)
 {
   for(const Location &location : mothership.getAbysses()){
     if(abyss.find(location.robot)== abyss.end()){
@@ -35,13 +37,11 @@ int Search::countDebris(int robot, int position){
     return 0;
   }
 
-  int count = 0; 
-  for(int segment : debris.at(robot)){
-    if(segment >= position - SIGNAL_RANGE && segment <= position + SIGNAL_RANGE){
-      count++;
-    }
-  }
-  return count;
+  const std::vector<int> &list = debris.at(robot);
+  std::vector<int>::const_iterator low = std::lower_bound(list.begin(), list.end(), position - SIGNAL_RANGE);
+  std::vector<int>::const_iterator high = std::upper_bound(list.begin(), list.end(), position + SIGNAL_RANGE);
+
+  return static_cast<int>(high-low);
 }
 
 int Search::signalStrength(int robot){
@@ -59,10 +59,15 @@ bool Search::isDone(int robot){
   return mothership.getRobotPosition(robot) >= getLastSegment(robot);
 }
 
-int Search::findBestRobot(){
+int Search::findBestRobot(int current){
   int best = -1;
-  int bestSignal = -1;
-  for(int robot = 0; robot < roboCount; ++robot){
+  int bestSignal = 0;
+  int offset[3] = {0,-1,1};
+
+
+
+  for(int i = 0; i < 3; ++i){
+    int robot = (current + offset[i] + roboCount)%roboCount;
     if(isDone(robot)){
       continue;
     }
@@ -72,42 +77,51 @@ int Search::findBestRobot(){
       bestSignal = signal;
     }
   }
-  return best;
+
+  if(best != -1){
+    return best;
+  }
+
+  for(int tries = 0; tries < roboCount; ++tries){
+    nextRobot = (nextRobot+1) % roboCount;
+    if(!isDone(nextRobot)){
+      return nextRobot;
+    }
+  }
+
+  return -1;
+  
 }
 
 SearchResult Search::findShipwreck()
 {
  int current = mothership.getActiveRobot();
- int noDebrisDrives = 0;
-
+ 
  while(true){
-  if(!isDone(current)){
-    int safeDistance = getLastSegment(current) - mothership.getRobotPosition(current);
+  int last = getLastSegment(current);
+  int turnStart = mothership.getRobotPosition(current);
+
+  while(mothership.getRobotPosition(current)<last && mothership.getRobotPosition(current)-turnStart<BUST){
+    int safeDistance = last-mothership.getRobotPosition(current);
     DriveResult result = mothership.driveActiveRobot(std::min(MAX_SEGMENTS_PER_DRIVE,safeDistance));
 
     if(result.reason == DriveStopReason::ShipwreckFound){
-      return SearchResult{true, Location{current,mothership.getRobotPosition(current)}};
+      return SearchResult{true, Location{current, mothership.getRobotPosition(current)}};
     }
 
     if(result.reason == DriveStopReason::DebrisFound){
       addDebris(current,mothership.getRobotPosition(current));
-      noDebrisDrives = 0;
-    }
-    else{
-      noDebrisDrives++;
     }
   }
-  if(isDone(current)|| noDebrisDrives >= 3){
-  int best = findBestRobot();
+
+  int best = findBestRobot(current);
   if(best == -1){
     return SearchResult{false, Location{}};
   }
 
-  if(isDone(current)|| signalStrength(best)>signalStrength(current)+2){
+  if(best != current){
     current = best;
     mothership.switchToRobot(current);
   }
-  noDebrisDrives = 0;
  }
-}
 }
